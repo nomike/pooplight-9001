@@ -1,0 +1,156 @@
+# =============================================================================
+# Standalone tank-level -> WLED bridge (ESPHome, classic ESP32 touch v1)
+# -----------------------------------------------------------------------------
+# Reads the insulated capacitive probe via the classic-ESP32 touch peripheral,
+# maps the raw reading to 0-100 % with a piecewise calibration curve, and POSTs
+# that as the "Percent" effect intensity on one WLED segment via WLED's JSON API.
+#
+# Classic ESP32 polarity: more water = LOWER raw. Recollect calibration
+# datapoints; they do not transfer from the S3 or from MicroPython.
+#
+# A local web UI (web_server) lets you watch the raw value and level without HA.
+# When you get HA access later, just add an `api:` block and it appears there
+# too - nothing else changes.
+# =============================================================================
+
+substitutions:
+  device_name: tank-wled
+  friendly_name: "Tank WLED"
+  touch_pin: GPIO32          # sense strip; other strip -> GND
+                             #   classic touch pins: 4/13/14/27/32/33
+                             #   avoid strapping pins 0/2/12/15
+
+  wled_host: "pooplight-9001.local"    # hostname or IP of the WLED controller
+  wled_seg:  "0"             # the Percent segment in your preset
+
+  # Water level -> WLED intensity. Percent fills from one end for 0..100 and
+  # from the other end for 100..200. Pick the pair that fills the way your
+  # strip is oriented - direction is set entirely by these two numbers.
+  ix_empty: "0"              # intensity at 0 %   (try "200" to flip the end)
+  ix_full:  "100"            # intensity at 100 % (try "100" to flip the end)
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf            # if http_request errors on your board, switch to
+                             #   `type: arduino`
+
+logger:
+  logs:
+    esp32_touch: INFO       # setup_mode would otherwise DEBUG-spam every 250 ms
+
+# No api: block on purpose - this runs standalone. Add one when HA arrives.
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+
+captive_portal:      # lets you enter WiFi creds from the AP if the join fails
+web_server:          # local UI at http://${device_name}.local for calibration
+
+http_request:
+  useragent: esphome/tank
+  timeout: 5s
+
+# -----------------------------------------------------------------------------
+# Touch peripheral. We read the raw capacitance via get_value(); the binary
+# sensor just instantiates the pad and is hidden.
+#
+# setup_mode MUST be true for analog use. ESPHome 2026.x only writes value_
+# on a threshold-crossing event, or while setup_mode polls the pad. On
+# classic ESP32 a touch is "raw < threshold", so threshold: 0 never fires
+# and get_value() stays at 0 forever. setup_mode keeps the loop alive and
+# refreshes the raw reading every 250 ms.
+# -----------------------------------------------------------------------------
+# Classic ESP32 touch v1 - use the chip defaults. The shortened
+# measurement_duration / sleep_duration values were an S3 overflow workaround
+# and make classic readings small and noisy.
+esp32_touch:
+  setup_mode: true
+
+binary_sensor:
+  - platform: esp32_touch
+    id: tank_pad
+    pin: ${touch_pin}
+    threshold: 0             # unused; we read the analog value instead
+    internal: true
+
+sensor:
+  # Raw capacitance - watch this in the web UI while calibrating.
+  - platform: template
+    id: tank_raw
+    name: "Tank Raw"
+    accuracy_decimals: 0
+    update_interval: 0.05s
+    lambda: "return id(tank_pad).get_value();"
+    filters:
+      # Median of the last `window_size` raw samples (one sample per
+      # update_interval, so 5 s of history here). Each new sample, sort
+      # those N values and keep the middle one. A brief spike from a
+      # drip or a nearby hand is thrown away; a real level change has
+      # to last ~window_size/2 samples before it shows up (about 2-3 s
+      # of lag at these settings). send_every: 1 publishes on every
+      # sample, not every Nth.
+      #
+      # Raising window_size (e.g. 9 or 15) makes the number calmer but
+      # does NOT add resolution. The first ~40 % of fill barely changes
+      # C, so there is no signal in that band to average into existence.
+      - median:
+          window_size: 5
+          send_every: 1
+
+  # Calibrated fill level. calibrate_linear/method:exact does piecewise-linear
+  # interpolation - the ESPHome equivalent of your MicroPython CAL_POINTS, and
+  # the right tool for the nonlinear curve you measured.
+  #
+  # IMPORTANT: ESPHome get_value() is a DIFFERENT scale from MicroPython's
+  # TouchPad.read(), so you must recollect these numbers here (see steps).
+  # Format is `<raw measured> -> <true percent>`. from-values MUST be listed
+  # ascending - ESPHome does not sort. A descending curve is fine as long as
+  # the raw (left-hand) numbers increase down the list.
+  - platform: copy
+    source_id: tank_raw
+    name: "Tank Level"
+    unit_of_measurement: "%"
+    icon: "mdi:water-percent"
+    accuracy_decimals: 0
+    filters:
+      - calibrate_linear:
+          method: exact
+          datapoints:
+            # Only endpoints are trustworthy so far. 10/20/30 % jug readings
+            # were inside the noise floor (and 30 % went the wrong way).
+            # from-values must be ascending.
+            - 103 -> 100     # full
+            - 144 -> 75
+            - 187 -> 50
+            - 245 -> 25
+            - 470 -> 0       # empty
+      - clamp:
+          min_value: 0
+          max_value: 100
+      - delta: 1.0           # only push to WLED when the level actually moves
+    on_value:
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            - http_request.post:
+                url: "http://${wled_host}/json/state"
+                body: !lambda |-
+                  int lvl = (int) x;
+                  int ix = ${ix_empty} + lvl * (${ix_full} - (${ix_empty})) / 100;
+                  if (ix < 0) ix = 0;
+                  if (ix > 255) ix = 255;
+                  return std::string("{\"seg\":[{\"id\":${wled_seg},\"ix\":")
+                         + to_string(ix) + "}]}";
