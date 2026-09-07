@@ -131,7 +131,7 @@ sensor:
             # Only endpoints are trustworthy so far. 10/20/30 % jug readings
             # were inside the noise floor (and 30 % went the wrong way).
             # from-values must be ascending.
-            - 103 -> 100     # full
+            - 125 -> 100     # full
             - 144 -> 75
             - 187 -> 50
             - 245 -> 25
