@@ -1,2 +1,2 @@
-waterlevel-sensor/.esphome
-waterlevel-sensor/secrets.yaml
+.esphome
+secrets.yaml
