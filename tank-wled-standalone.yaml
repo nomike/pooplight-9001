@@ -3,7 +3,8 @@
 # -----------------------------------------------------------------------------
 # Reads the insulated capacitive probe via the classic-ESP32 touch peripheral,
 # maps the raw reading to 0-100 % with a piecewise calibration curve, and POSTs
-# that as the "Percent" effect intensity on one WLED segment via WLED's JSON API.
+# that as the "Percent" effect intensity on one or more WLED segments via
+# WLED's JSON API.
 #
 # Classic ESP32 polarity: more water = LOWER raw. Recollect calibration
 # datapoints; they do not transfer from the S3 or from MicroPython.
@@ -21,7 +22,9 @@ substitutions:
                              #   avoid strapping pins 0/2/12/15
 
   wled_host: "pooplight-9001.local"    # hostname or IP of the WLED controller
-  wled_seg:  "0"             # the Percent segment in your preset
+  # Percent-effect segment ids. Comma-separated; becomes a C++ initializer
+  # list. One segment: "0". Several: "0, 1, 3".
+  wled_seg: "0"
 
   # Water level -> WLED intensity. Percent fills from one end for 0..100 and
   # from the other end for 100..200. Pick the pair that fills the way your
@@ -157,5 +160,12 @@ sensor:
                   int ix = ${ix_empty} + lvl * (${ix_full} - (${ix_empty})) / 100;
                   if (ix < 0) ix = 0;
                   if (ix > 255) ix = 255;
-                  return std::string("{\"seg\":[{\"id\":${wled_seg},\"ix\":")
-                         + to_string(ix) + "}]}";
+                  const int segs[] = {${wled_seg}};
+                  std::string body = "{\"seg\":[";
+                  for (size_t i = 0; i < sizeof(segs) / sizeof(segs[0]); i++) {
+                    if (i) body += ",";
+                    body += "{\"id\":" + to_string(segs[i]) + ",\"ix\":" +
+                            to_string(ix) + "}";
+                  }
+                  body += "]}";
+                  return body;
