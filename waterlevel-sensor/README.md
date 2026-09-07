@@ -69,7 +69,7 @@ In the example, it is wired to pin 32.
 
 You need to set the pin in tank-wled-standalone.yaml.
 
-Ground need to be connected to one of the GND pins of the ESP.
+Ground needs to be connected to one of the GND pins of the ESP.
 
 ## Install ESPHome
 
@@ -93,13 +93,14 @@ Wi-Fi and OTA credentials are **not** stored in the firmware YAML. They live in 
 cp secrets.yaml.example secrets.yaml
 ```
 
-Edit the three keys:
+Edit the keys:
 
 | Key | Purpose |
 |-----|---------|
 | `wifi_ssid` | Your 2.4 GHz Wi-Fi network name |
 | `wifi_password` | That network’s password |
 | `ota_password` | Password for later over-the-air flashes. Pick one and keep it; changing it later needs a USB reflash if the device is unreachable. |
+| `api_encryption_key` | 32-byte key for the Home Assistant API (`openssl rand -base64 32`). Paste the same value into HA when you add the device. |
 
 `secrets.yaml.example` is a template only. Do not put real passwords in it.
 
@@ -154,6 +155,21 @@ In `tank-wled-standalone.yaml`, under `substitutions:`:
 | `ix_empty` / `ix_full` | WLED intensity at 0 % and 100 %. Percent fills from one end for `0…100` and from the other for `100…200`. If the strip fills the wrong way, use e.g. `ix_empty: "200"` and `ix_full: "100"`. |
 
 Calibration datapoints are in the `calibrate_linear` block on the **Tank Level** sensor (see below). Changing them needs a reflash (OTA is enough).
+
+---
+
+## Home Assistant
+
+The ESPHome integration talks to the device’s **native API** on TCP port **6053**. That listener is compiled in only if the firmware has an `api:` block (this config does). The web UI on port 80 is not enough for auto-discovery.
+
+1. Put a 32-byte key in `secrets.yaml` as `api_encryption_key` (`openssl rand -base64 32`).
+2. Flash `tank-wled-standalone.yaml` (OTA is fine). Until you do, port 6053 stays closed.
+3. Wait for the node to rejoin Wi-Fi. HA should discover **tank-wled** via mDNS (`_esphomelib._tcp`).
+4. In the discovery notification, paste the **same** encryption key.
+
+If it does not appear: Settings → Devices & services → Add integration → ESPHome → host `tank-wled.local` (or the board’s IP) and the encryption key. mDNS often fails across VLANs; a raw IP then works.
+
+`Tank Raw` and `Tank Level` show up as sensor entities. The node still POSTs to WLED on its own; you do not have to move that into an HA automation unless you want to.
 
 ---
 
