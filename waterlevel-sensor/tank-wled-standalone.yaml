@@ -43,7 +43,12 @@ logger:
   logs:
     esp32_touch: INFO       # setup_mode would otherwise DEBUG-spam every 250 ms
 
-# No api: block on purpose - this runs standalone. Add one when HA arrives.
+# Native API — Home Assistant's ESPHome integration connects here (TCP 6053).
+# Without this block the port is closed and HA will not auto-discover the node.
+# The encryption key lives in secrets.yaml; paste the same key into HA when asked.
+api:
+  encryption:
+    key: !secret api_encryption_key
 
 ota:
   - platform: esphome
