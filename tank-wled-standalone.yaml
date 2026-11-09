@@ -24,6 +24,7 @@ substitutions:
   wled_host: "pooplight-9001.local"    # hostname or IP of the WLED controller
   # Percent-effect segment ids. Comma-separated; becomes a C++ initializer
   # list. One segment: "0". Several: "0, 1, 3".
+  wled_seg: "1, 2"
   # Re-POST the current fill this often, even if it has not changed.
   # Covers WLED preset loads that restore a stale Percent intensity.
   # On-change updates still happen immediately via delta: 1.0.
@@ -176,11 +177,12 @@ sensor:
             # Only endpoints are trustworthy so far. 10/20/30 % jug readings
             # were inside the noise floor (and 30 % went the wrong way).
             # from-values must be ascending.
-            - 125 -> 100     # full
-            - 144 -> 75
-            - 187 -> 50
-            - 245 -> 25
-            - 470 -> 0       # empty
+            - 90  -> 100  # full
+            - 113 -> 80
+            - 147 -> 60
+            - 207 -> 40
+            - 297 -> 20
+            - 340 -> 0    # empty
       - clamp:
           min_value: 0
           max_value: 100
