@@ -24,7 +24,10 @@ substitutions:
   wled_host: "pooplight-9001.local"    # hostname or IP of the WLED controller
   # Percent-effect segment ids. Comma-separated; becomes a C++ initializer
   # list. One segment: "0". Several: "0, 1, 3".
-  wled_seg: "0"
+  # Re-POST the current fill this often, even if it has not changed.
+  # Covers WLED preset loads that restore a stale Percent intensity.
+  # On-change updates still happen immediately via delta: 1.0.
+  wled_refresh_ms: "500"
 
   # Water level -> WLED intensity. Percent fills from one end for 0..100 and
   # from the other end for 100..200. Pick the pair that fills the way your
@@ -69,6 +72,39 @@ web_server:          # local UI at http://${device_name}.local for calibration
 http_request:
   useragent: esphome/tank
   timeout: 5s
+
+# Shared WLED update. Used on a 1 % level change and on wled_refresh_ms.
+# mode: single drops overlapping calls if a POST is still in flight.
+script:
+  - id: push_wled
+    mode: single
+    then:
+      - if:
+          condition:
+            - wifi.connected:
+            - lambda: return id(tank_level).has_state();
+          then:
+            - http_request.post:
+                url: "http://${wled_host}/json/state"
+                body: !lambda |-
+                  int lvl = (int) id(tank_level).state;
+                  int ix = ${ix_empty} + lvl * (${ix_full} - (${ix_empty})) / 100;
+                  if (ix < 0) ix = 0;
+                  if (ix > 255) ix = 255;
+                  const int segs[] = {${wled_seg}};
+                  std::string body = "{\"seg\":[";
+                  for (size_t i = 0; i < sizeof(segs) / sizeof(segs[0]); i++) {
+                    if (i) body += ",";
+                    body += "{\"id\":" + to_string(segs[i]) + ",\"ix\":" +
+                            to_string(ix) + "}";
+                  }
+                  body += "]}";
+                  return body;
+
+interval:
+  - interval: ${wled_refresh_ms}ms
+    then:
+      - script.execute: push_wled
 
 # -----------------------------------------------------------------------------
 # Touch peripheral. We read the raw capacitance via get_value(); the binary
@@ -127,6 +163,7 @@ sensor:
   # ascending - ESPHome does not sort. A descending curve is fine as long as
   # the raw (left-hand) numbers increase down the list.
   - platform: copy
+    id: tank_level
     source_id: tank_raw
     name: "Tank Level"
     unit_of_measurement: "%"
@@ -147,25 +184,6 @@ sensor:
       - clamp:
           min_value: 0
           max_value: 100
-      - delta: 1.0           # only push to WLED when the level actually moves
+      - delta: 1.0           # immediate POST when the level actually moves
     on_value:
-      - if:
-          condition:
-            wifi.connected:
-          then:
-            - http_request.post:
-                url: "http://${wled_host}/json/state"
-                body: !lambda |-
-                  int lvl = (int) x;
-                  int ix = ${ix_empty} + lvl * (${ix_full} - (${ix_empty})) / 100;
-                  if (ix < 0) ix = 0;
-                  if (ix > 255) ix = 255;
-                  const int segs[] = {${wled_seg}};
-                  std::string body = "{\"seg\":[";
-                  for (size_t i = 0; i < sizeof(segs) / sizeof(segs[0]); i++) {
-                    if (i) body += ",";
-                    body += "{\"id\":" + to_string(segs[i]) + ",\"ix\":" +
-                            to_string(ix) + "}";
-                  }
-                  body += "]}";
-                  return body;
+      - script.execute: push_wled

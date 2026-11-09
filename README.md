@@ -15,7 +15,7 @@ Active config: [`tank-wled-standalone.yaml`](tank-wled-standalone.yaml).
 1. An insulated aluminium sense plate on an acrylic strip, plus a bare stainless rod in the water (GND), form a capacitor. Water (εᵣ ≈ 80) is the dielectric; capacitance rises with submerged area.
 2. The ESP32 touch peripheral converts capacitance to a raw count. On classic ESP32, **more water = lower raw**.
 3. A piecewise `calibrate_linear` map turns that raw value into 0–100 %.
-4. On each percent change the node POSTs `{"seg":[{"id":0,"ix":<0-255>}, …]}` to `http://<wled_host>/json/state` for every id in `wled_seg`. That writes RAM only; frequent updates do not wear WLED’s flash.
+4. On each percent change, and again every `wled_refresh_ms`, the node POSTs `{"seg":[{"id":0,"ix":<0-255>}, …]}` to `http://<wled_host>/json/state` for every id in `wled_seg`. That writes RAM only; frequent updates do not wear WLED’s flash. The periodic POST keeps Percent intensity correct after a WLED preset load, which would otherwise restore a stale `ix`.
 
 Each listed WLED segment must be **on** and running the **Percent** effect or nothing will show on that segment. Other segments and the running preset are left alone.
 
@@ -152,6 +152,7 @@ In `tank-wled-standalone.yaml`, under `substitutions:`:
 | `touch_pin` | Sense-strip GPIO (default `GPIO32`) |
 | `wled_host` | WLED hostname or IP |
 | `wled_seg` | Comma-separated Percent-effect segment ids (default `0`). Example: `"0, 1, 3"` |
+| `wled_refresh_ms` | How often to re-POST the current fill even if it has not changed (default `500`). On-change updates still go out immediately. |
 | `ix_empty` / `ix_full` | WLED intensity at 0 % and 100 %. Percent fills from one end for `0…100` and from the other for `100…200`. If the strip fills the wrong way, use e.g. `ix_empty: "200"` and `ix_full: "100"`. |
 
 Calibration datapoints are in the `calibrate_linear` block on the **Tank Level** sensor (see below). Changing them needs a reflash (OTA is enough).
